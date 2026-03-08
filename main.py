@@ -1,5 +1,5 @@
 import asyncio
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import (
     ApplicationBuilder,
     ContextTypes,
@@ -11,7 +11,7 @@ from telegram.ext import (
 )
 import dotenv
 import os
-from db import get_players, insert_player, insert_match, insert_match_partecipant
+from db import get_players, insert_player, insert_match, insert_match_participants, get_matches, Match
 from functools import partial
 from datetime import datetime
 
@@ -24,6 +24,7 @@ END = 5
 
 dotenv.load_dotenv()
 TOKEN = os.environ.get("BOT_TOKEN")
+
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -153,7 +154,7 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     B_list = [("B", match_id, p, elo_prize_B, True if winner == "B" else False) for p in data["B"]]
     
     for l in A_list + B_list:
-        insert_match_partecipant(l[0], l[1], l[2], l[3], l[4])
+        insert_match_participants(l[0], l[1], l[2], l[3], l[4])
 
     summary = (
         f"Match Recorded! 🏆\n"
@@ -172,12 +173,68 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Match recording cancelled.")
     return ConversationHandler.END
 
+async def show_todays_match(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    matches = get_matches(date = datetime.today().date())
+    if matches:
+        matches_summary = [show_match(m) for m in matches]
+        matches_summary = "\n\=\=\=\=\=\=\=\n".join(matches_summary)
+        await context.bot.send_message(
+        chat_id=update.effective_chat.id, text=f"Here today's matches:\n{matches_summary}",parse_mode="MarkdownV2"
+    )
+    else:
+        await context.bot.send_message(
+        chat_id=update.effective_chat.id, text=f"No matches for today!")
+
+def show_match(m: Match) -> str:
+    date = m.date.strftime("%Y\-%m\-%d")
+    score_team_A = m.score_team_A
+    score_team_B = m.score_team_B
+    participants = {"A": [], "B": []}
+    for p in m.participants:
+        participants[p.team_id].append(p.player_id)
+    
+    winner = "A" if score_team_A > score_team_B else "B"
+    return (
+        f"Date: *{date}*\n"
+        f"Winner: *Team {winner}* 🏆\n"
+        f"Team A: *{', '.join(participants['A'])}*\n"
+        f"Team B: *{', '.join(participants['B'])}*\n"
+        f"Score: *{score_team_A}\-{score_team_B}*"
+    )
+    
+
+async def show_all_matches(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    matches = get_matches()
+    if matches:
+        matches_summary = [show_match(m) for m in matches]
+        matches_summary = "\n\=\=\=\=\=\=\=\n".join(matches_summary)
+        await context.bot.send_message(
+        chat_id=update.effective_chat.id, text=f"Here all the matches:\n{matches_summary}"
+    )
+    else:
+        await context.bot.send_message(
+        chat_id=update.effective_chat.id, text=f"No matches recorded"
+    )
+
+async def post_init(application):
+    commands = [
+        BotCommand("start", "Start the bot"),
+        BotCommand("todays_matches", "Get todays matches"),
+        BotCommand("all_matches", "Get all matches recorder"),
+        BotCommand("add_player", "Add a new player"),
+        BotCommand("add_match", "Add a new match"),
+        BotCommand("cancel", "Stop the 'add_match' command")
+    ]
+    await application.bot.set_my_commands(commands)
 
 if __name__ == "__main__":
-    application = ApplicationBuilder().token(TOKEN).build()
+    application = ApplicationBuilder().token(TOKEN).post_init(post_init).build()
 
     start_handler = CommandHandler("start", start)
     add_handler = CommandHandler("add_player", add_player)
+    show_todays_match_handler = CommandHandler("todays_matches", show_todays_match)
+    show_all_match_handler = CommandHandler("all_matches", show_all_matches)
+
 
     get_p1a = partial(
         get_player, state_id=A1, team="A", text="Who is the player 2 of team A?"
@@ -191,7 +248,7 @@ if __name__ == "__main__":
     get_p2b = partial(get_player, state_id=B2, team="B", is_last_player=True)
 
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("addmatch", start_match)],
+        entry_points=[CommandHandler("add_match", start_match)],
         states={
             A1: [CallbackQueryHandler(get_p1a)],
             A2: [CallbackQueryHandler(get_p2a)],
@@ -206,5 +263,8 @@ if __name__ == "__main__":
     application.add_handler(start_handler)
     application.add_handler(add_handler)
     application.add_handler(conv_handler)
+    application.add_handler(show_todays_match_handler)
+    application.add_handler(show_all_match_handler)
+
 
     application.run_polling()
