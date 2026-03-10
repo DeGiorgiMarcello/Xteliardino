@@ -18,7 +18,8 @@ from db import (
     insert_match_participants,
     get_matches,
     Match,
-    get_players_ranking
+    get_players_ranking,
+    update_players_elo
 )
 from functools import partial
 from datetime import datetime
@@ -122,6 +123,11 @@ async def get_score(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def add_player(update: Update, context: ContextTypes.DEFAULT_TYPE):
     player = context.args[0]
+    if not player:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, text="Please provide a player name."
+        )
+        return
     players = get_players()
 
     if player in players:
@@ -142,32 +148,45 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     fail_team_score = int(query.data)
     data = context.user_data
 
-    elo_prize = 42  # change
-
     if "score_A" in data:
         data["score_B"] = fail_team_score
         winner = "A"
-        elo_prize_A = elo_prize
-        elo_prize_B = -elo_prize
 
     else:
         data["score_A"] = fail_team_score
         winner = "B"
-        elo_prize_A = -elo_prize
-        elo_prize_B = elo_prize
+
+    ranking = {p[0]:p[1] for p in get_players_ranking()}
+    team_A_elo = sum(ranking[p] for p in data["A"])
+    team_B_elo = sum(ranking[p] for p in data["B"])
+    score_team_A, score_team_B = compute_delta(team_A_elo, team_B_elo, data["score_A"], data["score_B"])
+    score_player_A = round(score_team_A / 2)
+    score_player_B = round(score_team_B / 2)
+
 
     match_id = insert_match(score_A=data["score_A"], score_B=data["score_B"])
     A_list = [
-        ("A", match_id, p, elo_prize_A, True if winner == "A" else False)
+        ("A", match_id, p, score_player_A, True if winner == "A" else False)
         for p in data["A"]
     ]
     B_list = [
-        ("B", match_id, p, elo_prize_B, True if winner == "B" else False)
+        ("B", match_id, p, score_player_B, True if winner == "B" else False)
         for p in data["B"]
     ]
 
-    for l in A_list + B_list:
-        insert_match_participants(l[0], l[1], l[2], l[3], l[4])
+    
+    
+    for _l in A_list + B_list:
+        team = _l[0]
+        match_id = _l[1]
+        player_id = _l[2]
+        prize_won = _l[3]
+        won = _l[4]
+
+        insert_match_participants(team, match_id, player_id, prize_won, won)
+        current_elo = ranking[player_id]
+        new_elo = current_elo + prize_won
+        update_players_elo(player_id, new_elo)
 
     summary = (
         f"Match Recorded! 🏆\n"
@@ -242,7 +261,7 @@ async def show_all_matches(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         await context.bot.send_message(
-            chat_id=update.effective_chat.id, text=f"No matches recorded"
+            chat_id=update.effective_chat.id, text=f"No matches recorded", parse_mode="MarkdownV2"
         )
 
 
@@ -265,7 +284,7 @@ async def show_ranking(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if ranking:
         ranking_text = "Current Player Rankings:\n\n"
         for i, (name, elo) in enumerate(ranking, start=1):
-            ranking_text += f"{emoji.get(i,'')}{i}. {name} - ELO: {elo}\n"
+            ranking_text += f"{emoji.get(i,' ')}{i}. {name} - ELO: {elo}\n"
         await context.bot.send_message(
             chat_id=update.effective_chat.id, text=ranking_text
         )

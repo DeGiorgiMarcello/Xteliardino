@@ -6,7 +6,7 @@ from sqlalchemy import (
     Date,
     ForeignKey,
     Boolean,
-    insert,
+    update,
     select
 )
 from sqlalchemy.orm import declarative_base, Session, relationship, selectinload
@@ -54,7 +54,6 @@ def get_current_player_elo(player_id: str):
             qry = select(Player.elo).where(Player.name == player_id)
             return session.execute(qry)[0]
 
-from sqlalchemy import select
 
 def get_players():
     with Session(engine) as session:
@@ -65,7 +64,16 @@ def get_players_ranking():
     with Session(engine) as session:
         statement = select(Player.name, Player.elo).order_by(Player.elo.desc())
         return session.execute(statement).all()
-        
+
+def update_players_elo(player_id: str, new_elo: int):
+    with Session(engine) as session:
+        with session.begin():
+            stmt = (
+                update(Player)
+                .where(Player.name == player_id)
+                .values(elo=new_elo)
+            )
+            session.execute(stmt)    
 
 
 def insert_player(player_name: str):
@@ -83,7 +91,7 @@ def insert_match(score_A: int, score_B: int) -> int:
         return match.id
 
 def insert_match_participants(
-    team_id: str, match_id: str, player_id, score_in_match: int, is_winner: bool
+    team_id: str, match_id: str, player_id:str, score_in_match: int, is_winner: bool
 ):
     with Session(engine) as session:
         mp = MatchParticipant(
