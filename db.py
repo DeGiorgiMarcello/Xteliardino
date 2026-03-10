@@ -60,6 +60,11 @@ def get_players():
     with Session(engine) as session:
         statement = select(Player.name)
         return session.scalars(statement).all()
+
+def get_players_ranking():
+    with Session(engine) as session:
+        statement = select(Player.name, Player.elo).order_by(Player.elo.desc())
+        return session.execute(statement).all()
         
 
 
