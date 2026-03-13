@@ -4,8 +4,6 @@ from telegram.ext import (
     ApplicationBuilder,
     ContextTypes,
     CommandHandler,
-    MessageHandler,
-    filters,
     ConversationHandler,
     CallbackQueryHandler,
 )
@@ -19,10 +17,11 @@ from db import (
     get_matches,
     Match,
     get_players_ranking,
-    update_players_elo
+    update_players_elo,
 )
 from functools import partial
 from datetime import datetime
+
 
 A1 = 0
 A2 = 1
@@ -57,18 +56,18 @@ def get_player_keyboard(players: list[str]):
 
 
 def get_teams_keyboard(data: dict):
-    keyboard = []
-    teams = {"A": f"Team A\n {data['A']}", "B": f"Team B\n {data['B']}"}
 
-    row = [InlineKeyboardButton(v, callback_data=k) for k, v in teams.items()]
-    keyboard.append(row)
-    return InlineKeyboardMarkup(keyboard)
+    keyboard = [
+        InlineKeyboardButton("🟥", callback_data="A"),
+        InlineKeyboardButton("🟦", callback_data="B"),
+    ]
+    return InlineKeyboardMarkup([keyboard])
 
 
 async def start_match(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["players"] = get_players()
     await update.message.reply_text(
-        "Who is Player 1 for Team A?",
+        "Who is Player 1 for Team 🟥?",
         reply_markup=get_player_keyboard(context.user_data["players"]),
     )
     return 0
@@ -100,7 +99,10 @@ async def get_player(
             msg, reply_markup=get_player_keyboard(available_players)
         )
     else:
-        await query.edit_message_text("Who won?", reply_markup=get_teams_keyboard(data))
+        players_A = ", ".join(data["A"])
+        players_B = ", ".join(data["B"])
+        msg = f"Who won?\n\nTeam 🟥: {players_A}\n Team 🟦: {players_B}"
+        await query.edit_message_text(msg, reply_markup=get_teams_keyboard(data))
     return state_id + 1
 
 
@@ -156,13 +158,14 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data["score_A"] = fail_team_score
         winner = "B"
 
-    ranking = {p[0]:p[1] for p in get_players_ranking()}
+    ranking = {p[0]: p[1] for p in get_players_ranking()}
     team_A_elo = sum(ranking[p] for p in data["A"])
     team_B_elo = sum(ranking[p] for p in data["B"])
-    score_team_A, score_team_B = compute_delta(team_A_elo, team_B_elo, data["score_A"], data["score_B"])
+    score_team_A, score_team_B = compute_delta(
+        team_A_elo, team_B_elo, data["score_A"], data["score_B"]
+    )
     score_player_A = round(score_team_A / 2)
     score_player_B = round(score_team_B / 2)
-
 
     match_id = insert_match(score_A=data["score_A"], score_B=data["score_B"])
     A_list = [
@@ -174,8 +177,6 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for p in data["B"]
     ]
 
-    
-    
     for _l in A_list + B_list:
         team = _l[0]
         match_id = _l[1]
@@ -190,8 +191,9 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     summary = (
         f"Match Recorded! 🏆\n"
-        f"Team A: {', '.join(data['A'])}\n"
-        f"Team B: {', '.join(data['B'])}\n"
+        f"ELO won/lost: ± {prize_won}\n"
+        f"Team 🟥: {', '.join(data['A'])}\n"
+        f"Team 🟦: {', '.join(data['B'])}\n"
         f"Score: {data['score_A']}-{data['score_B']}"
     )
 
@@ -211,6 +213,7 @@ async def show_todays_match(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if matches:
         matches_summary = [show_match(m) for m in matches]
         matches_summary = "\n\=\=\=\=\=\=\=\n".join(matches_summary)
+        matches_summary = matches_summary.replace(".", "\.")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"Here today's matches:\n{matches_summary}",
@@ -218,7 +221,7 @@ async def show_todays_match(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         await context.bot.send_message(
-            chat_id=update.effective_chat.id, text=f"No matches for today!"
+            chat_id=update.effective_chat.id, text="No matches for today!"
         )
 
 
@@ -240,43 +243,46 @@ def show_match(m: Match) -> str:
     for p in m.participants:
         participants[p.team_id].append(p.player_id)
 
-    winner = "A" if score_team_A > score_team_B else "B"
+    winner = "🟥" if score_team_A > score_team_B else "🟦"
     return (
         f"Date: *{date}*\n"
         f"Winner: *Team {winner}* 🏆\n"
-        f"Team A: *{', '.join(participants['A'])}*\n"
-        f"Team B: *{', '.join(participants['B'])}*\n"
+        f"Team 🟥: *{', '.join(participants['A'])}*\n"
+        f"Team 🟦: *{', '.join(participants['B'])}*\n"
         f"Score: *{score_team_A}\-{score_team_B}*"
     )
 
 
 async def show_all_matches(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    matches = get_matches()
-    if matches:
-        matches_summary = [show_match(m) for m in matches]
-        matches_summary = "\n\=\=\=\=\=\=\=\n".join(matches_summary)
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=f"Here all the matches:\n{matches_summary}",
-        )
-    else:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id, text=f"No matches recorded", parse_mode="MarkdownV2"
-        )
+    # TODO
+    matches_df = get_matches(as_df=True)
+    # if matches:
+    #     matches_summary = [show_match(m) for m in matches]
+    #     matches_summary = "\n\=\=\=\=\=\=\=\n".join(matches_summary)
+    #     await context.bot.send_message(
+    #         chat_id=update.effective_chat.id,
+    #         text=f"Here all the matches:\n{matches_summary}",
+    #     )
+    # else:
+    #     await context.bot.send_message(
+    #         chat_id=update.effective_chat.id,
+    #         text="No matches recorded",
+    #         parse_mode="MarkdownV2",
+    #     )
 
 
 async def post_init(application):
     commands = [
         BotCommand("start", "Start the bot"),
-        BotCommand("todays_matches", "Get todays matches"),
-        BotCommand("all_matches", "Get all matches recorder"),
+        # BotCommand("todays_matches", "Get todays matches"),
+        # BotCommand("all_matches", "Get all the recorded matches"),
         BotCommand("add_player", "Add a new player"),
         BotCommand("add_match", "Add a new match"),
         BotCommand("cancel", "Stop the 'add_match' command"),
         BotCommand("ranking", "Show the ranking"),
-
     ]
     await application.bot.set_my_commands(commands)
+
 
 async def show_ranking(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ranking = get_players_ranking()
@@ -284,7 +290,7 @@ async def show_ranking(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if ranking:
         ranking_text = "Current Player Rankings:\n\n"
         for i, (name, elo) in enumerate(ranking, start=1):
-            ranking_text += f"{emoji.get(i,' ')}{i}. {name} - ELO: {elo}\n"
+            ranking_text += f"{emoji.get(i, ' ')}{i}. {name} - ELO: {elo}\n"
         await context.bot.send_message(
             chat_id=update.effective_chat.id, text=ranking_text
         )
@@ -292,6 +298,7 @@ async def show_ranking(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id=update.effective_chat.id, text="No players found."
         )
+
 
 if __name__ == "__main__":
     application = ApplicationBuilder().token(TOKEN).post_init(post_init).build()
@@ -329,8 +336,8 @@ if __name__ == "__main__":
     application.add_handler(start_handler)
     application.add_handler(add_handler)
     application.add_handler(conv_handler)
-    application.add_handler(show_todays_match_handler)
-    application.add_handler(show_all_match_handler)
+    # application.add_handler(show_todays_match_handler)
+    # application.add_handler(show_all_match_handler)
     application.add_handler(show_ranking_handler)
 
     application.run_polling()
