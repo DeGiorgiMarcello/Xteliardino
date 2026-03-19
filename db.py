@@ -8,6 +8,9 @@ from sqlalchemy import (
     Boolean,
     update,
     select,
+    func,
+    cast,
+    desc,
 )
 from sqlalchemy.orm import declarative_base, Session, relationship, selectinload
 from datetime import datetime
@@ -104,6 +107,28 @@ def insert_match_participants(
         )
         session.add(mp)
         session.commit()
+
+
+def get_stats():
+    with Session(engine) as session:
+        stmnt = (
+            select(
+                MatchParticipant.player_id,
+                func.count(MatchParticipant.is_winner).label("total_matches"),
+                func.sum(cast(MatchParticipant.is_winner, Integer)).label(
+                    "won_matches"
+                ),
+                func.round(
+                    func.sum(cast(MatchParticipant.is_winner, Integer))
+                    * 100
+                    / func.count(cast(MatchParticipant.is_winner, Integer))
+                ).label("won_ratio"),
+            )
+            .group_by(MatchParticipant.player_id)
+            .order_by(desc("won_ratio"))
+        )
+
+        return session.execute(stmnt).mappings().all()
 
 
 def get_matches(date: datetime = None, as_df=False):

@@ -18,10 +18,12 @@ from db import (
     Match,
     get_players_ranking,
     update_players_elo,
+    get_stats,
 )
+import pandas as pd
 from functools import partial
 from datetime import datetime
-
+from utils import dataframe_to_image
 
 A1 = 0
 A2 = 1
@@ -209,20 +211,22 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def show_todays_match(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    matches = get_matches(date=datetime.today().date())
-    if matches:
-        matches_summary = [show_match(m) for m in matches]
-        matches_summary = "\n\=\=\=\=\=\=\=\n".join(matches_summary)
-        matches_summary = matches_summary.replace(".", "\.")
+    matches_df = get_matches(date=datetime.today().date(), as_df=True)
+    if matches_df.empty:
         await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=f"Here today's matches:\n{matches_summary}",
-            parse_mode="MarkdownV2",
+            chat_id=update.effective_chat.id, text="No matches recorded yet."
         )
-    else:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id, text="No matches for today!"
-        )
+        return
+    path = dataframe_to_image(
+        matches_df, path=f"/tmp/todays_matches_df_{update.effective_chat.id}.png"
+    )
+
+    await send_dataframe_image(
+        chat_id=update.effective_chat.id,
+        image_path=path,
+        caption="All todays matches recorded",
+        bot=application.bot,
+    )
 
 
 def compute_delta(
@@ -254,32 +258,57 @@ def show_match(m: Match) -> str:
 
 
 async def show_all_matches(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # TODO
     matches_df = get_matches(as_df=True)
-    # if matches:
-    #     matches_summary = [show_match(m) for m in matches]
-    #     matches_summary = "\n\=\=\=\=\=\=\=\n".join(matches_summary)
-    #     await context.bot.send_message(
-    #         chat_id=update.effective_chat.id,
-    #         text=f"Here all the matches:\n{matches_summary}",
-    #     )
-    # else:
-    #     await context.bot.send_message(
-    #         chat_id=update.effective_chat.id,
-    #         text="No matches recorded",
-    #         parse_mode="MarkdownV2",
-    #     )
+    if matches_df.empty:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, text="No matches recorded yet."
+        )
+        return
+    path = dataframe_to_image(
+        matches_df, path=f"/tmp/matches_df_{update.effective_chat.id}.png"
+    )
+
+    await send_dataframe_image(
+        chat_id=update.effective_chat.id,
+        image_path=path,
+        caption="All matches recorded",
+        bot=application.bot,
+    )
+
+
+async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    stats = get_stats()
+    df = pd.DataFrame(stats)
+    path = dataframe_to_image(df, path=f"/tmp/stats_{update.effective_chat.id}.png")
+
+    await send_dataframe_image(
+        chat_id=update.effective_chat.id,
+        image_path=path,
+        caption="🏆 Match Statistics",
+        bot=application.bot,
+    )
+
+
+async def send_dataframe_image(
+    chat_id: int, image_path: str, caption: str = "", bot=None
+):
+
+    with open(image_path, "rb") as image_file:
+        await bot.send_photo(chat_id=chat_id, photo=image_file, caption=caption)
+
+    os.remove(image_path)
 
 
 async def post_init(application):
     commands = [
         BotCommand("start", "Start the bot"),
-        # BotCommand("todays_matches", "Get todays matches"),
-        # BotCommand("all_matches", "Get all the recorded matches"),
+        BotCommand("todays_matches", "Get todays matches"),
+        BotCommand("all_matches", "Get all the recorded matches"),
         BotCommand("add_player", "Add a new player"),
         BotCommand("add_match", "Add a new match"),
         BotCommand("cancel", "Stop the 'add_match' command"),
         BotCommand("ranking", "Show the ranking"),
+        BotCommand("stats", "Show stats"),
     ]
     await application.bot.set_my_commands(commands)
 
@@ -308,6 +337,7 @@ if __name__ == "__main__":
     show_todays_match_handler = CommandHandler("todays_matches", show_todays_match)
     show_all_match_handler = CommandHandler("all_matches", show_all_matches)
     show_ranking_handler = CommandHandler("ranking", show_ranking)
+    show_stats_handler = CommandHandler("stats", show_stats)
 
     get_p1a = partial(
         get_player, state_id=A1, team="A", text="Who is the player 2 of team A?"
@@ -336,8 +366,9 @@ if __name__ == "__main__":
     application.add_handler(start_handler)
     application.add_handler(add_handler)
     application.add_handler(conv_handler)
-    # application.add_handler(show_todays_match_handler)
-    # application.add_handler(show_all_match_handler)
+    application.add_handler(show_todays_match_handler)
+    application.add_handler(show_all_match_handler)
     application.add_handler(show_ranking_handler)
+    application.add_handler(show_stats_handler)
 
     application.run_polling()
