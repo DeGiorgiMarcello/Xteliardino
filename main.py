@@ -193,7 +193,8 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     summary = (
         f"Match Recorded! 🏆\n"
-        f"ELO won/lost: ± {prize_won}\n"
+        f"ELO won/lost by each player of 🟥: ± {score_player_A}\n"
+        f"ELO won/lost by each player of 🟦: ± {score_player_B}\n"
         f"Team 🟥: {', '.join(data['A'])}\n"
         f"Team 🟦: {', '.join(data['B'])}\n"
         f"Score: {data['score_A']}-{data['score_B']}"
