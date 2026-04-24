@@ -28,6 +28,15 @@ class Player(Base):
     elo = Column(Integer, default=2000)
 
 
+class PlayerEloHistory(Base):
+    __tablename__ = "player_elo_history"
+
+    id = Column(Integer, primary_key=True)
+    player_id = Column(ForeignKey(Player.name), nullable=False)
+    elo = Column(Integer, nullable=False)
+    recorded_at = Column(Date, nullable=False, default=datetime.today().date())
+
+
 class Match(Base):
     __tablename__ = "match"
 
@@ -109,6 +118,38 @@ def insert_match_participants(
         session.commit()
 
 
+def snapshot_elo():
+    """Save the current ELO of every player for today. Call at startup. If called multiple times a day, the snapshot will only be saved for
+    new players stored in the session.
+    NOTE: this works because we shutdown the bot at the end of the day.
+    """
+    today = datetime.today().date()
+    with Session(engine) as session:
+        with session.begin():
+            # Avoid duplicate snapshots for the same day
+            existing = (
+                session.execute(
+                    select(PlayerEloHistory.player_id).where(
+                        PlayerEloHistory.recorded_at == today
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+            players = session.execute(select(Player.name, Player.elo)).all()
+
+            for name, elo in players:
+                if name not in existing:
+                    session.add(
+                        PlayerEloHistory(
+                            player_id=name,
+                            elo=elo,
+                            recorded_at=today,
+                        )
+                    )
+
+
 def get_stats():
     with Session(engine) as session:
         stmnt = (
@@ -153,3 +194,49 @@ def get_matches(date: datetime = None, as_df=False):
 
             return matches_df.merge(pivoted, left_on="id", right_on="match_id")
         return session.scalars(stmnt).all()
+
+
+def get_players_ranking_with_delta():
+    """
+    Returns the current ranking with ELO delta compared to the last day a match has been recorded.
+
+    Each row: (rank, name, elo, previous_elo, delta, trend)
+    trend: '▲' if improved, '▼' if declined, '─' if unchanged or no history
+    """
+
+    with Session(engine) as session:
+        current_stmt = select(Player.name, Player.elo).order_by(Player.elo.desc())
+        current = session.execute(current_stmt).all()
+
+        history_stmt = select(
+            PlayerEloHistory.player_id,
+            PlayerEloHistory.elo,
+        )
+
+        last_elos = {
+            row.player_id: row.elo for row in session.execute(history_stmt).all()
+        }
+
+    ranking = []
+    for rank, (name, elo) in enumerate(current, start=1):
+        prev_elo = last_elos.get(name)
+
+        if prev_elo is None:
+            delta = None
+            trend = "─"
+        else:
+            delta = elo - prev_elo
+            trend = "▲" if delta > 0 else ("▼" if delta < 0 else "─")
+
+        ranking.append(
+            {
+                "rank": rank,
+                "name": name,
+                "elo": elo,
+                "prev_elo": prev_elo,
+                "delta": delta,
+                "trend": trend,
+            }
+        )
+
+    return ranking

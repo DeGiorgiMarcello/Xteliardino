@@ -1,4 +1,3 @@
-import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import (
     ApplicationBuilder,
@@ -17,8 +16,10 @@ from db import (
     get_matches,
     Match,
     get_players_ranking,
+    get_players_ranking_with_delta,
     update_players_elo,
     get_stats,
+    snapshot_elo,
 )
 import pandas as pd
 from functools import partial
@@ -301,6 +302,7 @@ async def send_dataframe_image(
 
 
 async def post_init(application):
+    snapshot_elo()
     commands = [
         BotCommand("start", "Start the bot"),
         BotCommand("todays_matches", "Get todays matches"),
@@ -315,12 +317,24 @@ async def post_init(application):
 
 
 async def show_ranking(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    ranking = get_players_ranking()
+    ranking = get_players_ranking_with_delta()
     emoji = {1: "🥇", 2: "🥈", 3: "🥉"}
+
     if ranking:
         ranking_text = "Current Player Rankings:\n\n"
-        for i, (name, elo) in enumerate(ranking, start=1):
-            ranking_text += f"{emoji.get(i, ' ')}{i}. {name} - ELO: {elo}\n"
+        for row in ranking:
+            i = row["rank"]
+            name = row["name"]
+            elo = row["elo"]
+            delta = row["delta"]
+            trend = row["trend"]
+
+            delta_str = ""
+            if delta is not None:
+                delta_str = f", {trend} {delta}"
+
+            ranking_text += f"{emoji.get(i, ' ')}{i}. {name}: {elo}{delta_str}\n"
+
         await context.bot.send_message(
             chat_id=update.effective_chat.id, text=ranking_text
         )
